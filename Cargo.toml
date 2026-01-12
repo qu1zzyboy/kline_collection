@@ -1,0 +1,50 @@
+[package]
+name = "nau_strategy"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "kline_col"
+path = "src/main.rs"
+
+[dependencies]
+# NautilusTrader core crates
+nautilus-trading = { path = "../nautilus_trader/crates/trading", version = "0.53.0" }
+nautilus-model = { path = "../nautilus_trader/crates/model", version = "0.53.0" }
+nautilus-system = { path = "../nautilus_trader/crates/system", version = "0.53.0" }
+nautilus-common = { path = "../nautilus_trader/crates/common", version = "0.53.0", features = ["live"] }
+nautilus-core = { path = "../nautilus_trader/crates/core", version = "0.53.0" }
+nautilus-network = { path = "../nautilus_trader/crates/network", version = "0.53.0" }
+nautilus-data = { path = "../nautilus_trader/crates/data", version = "0.53.0" }
+nautilus-live = { path = "../nautilus_trader/crates/live", version = "0.53.0" }
+
+# OKX adapter
+nautilus-okx = { path = "../nautilus_trader/crates/adapters/okx", version = "0.53.0" }
+
+# Binance adapter
+nautilus-binance = { path = "../nautilus_trader/crates/adapters/binance", version = "0.53.0" }
+
+# Async runtime and utilities
+tokio = { version = "1.48.0", features = ["full"] }
+futures-util = "0.3.31"
+
+# Logging
+log = "0.4.29"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+
+# Error handling
+anyhow = "1.0.100"
+
+# Environment variables
+dotenvy = "0.15.7"
+
+# Redis for storing kline data
+redis = { version = "1.0.2", default-features = false, features = [
+    "connection-manager",
+    "tokio-comp",
+] }
+serde_json = "1.0.149"
+
+# Test utilities (for DataTester)
+nautilus-testkit = { path = "../nautilus_trader/crates/testkit", version = "0.53.0" }
