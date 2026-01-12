@@ -11,6 +11,9 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # 切换到项目目录
 cd "$PROJECT_DIR"
 
+# 服务名称
+BINARY_NAME="kline_col"
+
 # 开发环境配置
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 export MAX_KLINES_PER_SYMBOL="${MAX_KLINES_PER_SYMBOL:-600}"
@@ -23,6 +26,22 @@ export BINANCE_ENVIRONMENT="${BINANCE_ENVIRONMENT:-Mainnet}"
 
 # 创建日志目录
 mkdir -p "$LOG_DIRECTORY"
+
+# PID 文件路径
+PID_FILE="$PROJECT_DIR/${BINARY_NAME}.pid"
+
+# 检查服务是否已在运行
+if [ -f "$PID_FILE" ]; then
+    OLD_PID=$(cat "$PID_FILE")
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "错误: 服务已在运行 (PID: $OLD_PID)"
+        echo "如需重启，请先运行: ./scripts/stop.sh"
+        exit 1
+    else
+        # PID 文件存在但进程不存在，删除旧的 PID 文件
+        rm -f "$PID_FILE"
+    fi
+fi
 
 # 显示配置信息
 echo "=== Binance Futures K线采集服务 (开发模式) ==="
@@ -37,6 +56,30 @@ echo "  Binance 产品类型: $BINANCE_PRODUCT_TYPE"
 echo "  Binance 环境: $BINANCE_ENVIRONMENT"
 echo ""
 
-# 运行服务（debug 模式）
-exec cargo run --bin kline_col
+# 先编译（如果还没有编译）
+echo "正在编译服务..."
+cargo build --bin kline_col
+
+# 启动服务（后台运行）
+echo "正在启动服务..."
+BINARY_PATH="$PROJECT_DIR/target/debug/${BINARY_NAME}"
+nohup "$BINARY_PATH" > /dev/null 2>&1 &
+PID=$!
+
+# 保存 PID
+echo $PID > "$PID_FILE"
+
+# 等待一下，检查进程是否还在运行
+sleep 2
+if ! kill -0 "$PID" 2>/dev/null; then
+    rm -f "$PID_FILE"
+    echo "错误: 服务启动失败"
+    exit 1
+fi
+
+echo "服务已启动 (PID: $PID)"
+echo "PID 文件: $PID_FILE"
+echo ""
+echo "停止服务: ./scripts/stop.sh"
+echo "查看日志: tail -f $LOG_DIRECTORY/*.log"
 
