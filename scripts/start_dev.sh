@@ -14,7 +14,15 @@ cd "$PROJECT_DIR"
 # 服务名称
 BINARY_NAME="kline_col"
 
-# 开发环境配置
+# 先加载 .env 文件（如果存在），这样 .env 中的值会被优先使用
+if [ -f "$PROJECT_DIR/.env" ]; then
+    echo "加载 .env 文件..."
+    set -a  # 自动导出所有变量
+    source "$PROJECT_DIR/.env"
+    set +a  # 关闭自动导出
+fi
+
+# 开发环境配置（只有在环境变量未设置时才使用默认值）
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 export REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 export REDIS_DATABASE="${REDIS_DATABASE:-0}"
