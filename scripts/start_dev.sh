@@ -16,11 +16,25 @@ BINARY_NAME="kline_col"
 
 # 开发环境配置
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
+export REDIS_PASSWORD="${REDIS_PASSWORD:-}"
+export REDIS_DATABASE="${REDIS_DATABASE:-0}"
+
+# K 线采集配置
 export MAX_KLINES_PER_SYMBOL="${MAX_KLINES_PER_SYMBOL:-600}"
-export REDIS_KEY_PREFIX="${REDIS_KEY_PREFIX:-binance:kline:1s}"
+export KLINE_REDIS_KEY_PREFIX="${KLINE_REDIS_KEY_PREFIX:-binance:kline:1s}"
+
+# 订单簿采集配置
+export MAX_SNAPSHOTS_PER_SYMBOL="${MAX_SNAPSHOTS_PER_SYMBOL:-1200}"
+export OB_REDIS_KEY_PREFIX="${OB_REDIS_KEY_PREFIX:-binance:ob:500ms}"
+export ORDER_BOOK_DEPTH="${ORDER_BOOK_DEPTH:-5}"
+export SNAPSHOT_INTERVAL_MS="${SNAPSHOT_INTERVAL_MS:-500}"
+
+# 日志配置
 export LOG_DIRECTORY="${LOG_DIRECTORY:-logs}"
 export LOG_LEVEL_STDOUT="${LOG_LEVEL_STDOUT:-Debug}"
 export LOG_LEVEL_FILE="${LOG_LEVEL_FILE:-Debug}"
+
+# Binance 配置
 export BINANCE_PRODUCT_TYPE="${BINANCE_PRODUCT_TYPE:-UsdM}"
 export BINANCE_ENVIRONMENT="${BINANCE_ENVIRONMENT:-Mainnet}"
 
@@ -44,11 +58,22 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 # 显示配置信息
-echo "=== Binance Futures K线采集服务 (开发模式) ==="
+echo "=== Binance Futures 数据采集服务 (开发模式: K线 + 订单簿) ==="
 echo "配置信息:"
 echo "  Redis URL: $REDIS_URL"
+echo "  Redis 数据库: $REDIS_DATABASE"
+echo ""
+echo "K 线采集配置:"
 echo "  每个品种最大 K 线数: $MAX_KLINES_PER_SYMBOL"
-echo "  Redis Key 前缀: $REDIS_KEY_PREFIX"
+echo "  Redis Key 前缀: $KLINE_REDIS_KEY_PREFIX"
+echo ""
+echo "订单簿采集配置:"
+echo "  每个品种最大快照数: $MAX_SNAPSHOTS_PER_SYMBOL"
+echo "  Redis Key 前缀: $OB_REDIS_KEY_PREFIX"
+echo "  订单簿深度: $ORDER_BOOK_DEPTH 档"
+echo "  快照间隔: $SNAPSHOT_INTERVAL_MS ms"
+echo ""
+echo "其他配置:"
 echo "  日志目录: $LOG_DIRECTORY"
 echo "  日志级别 (stdout): $LOG_LEVEL_STDOUT"
 echo "  日志级别 (file): $LOG_LEVEL_FILE"
@@ -58,17 +83,25 @@ echo ""
 
 # 启动服务（后台运行）
 echo "正在启动服务..."
-cargo run --bin kline_col > /dev/null 2>&1 &
+
+# 创建日志文件用于捕获启动错误
+STARTUP_LOG="$LOG_DIRECTORY/startup.log"
+cargo run --bin kline_col > "$STARTUP_LOG" 2>&1 &
 PID=$!
 
 # 保存 PID
 echo $PID > "$PID_FILE"
 
 # 等待一下，检查进程是否还在运行
-sleep 1
+sleep 2
 if ! kill -0 "$PID" 2>/dev/null; then
     rm -f "$PID_FILE"
     echo "错误: 服务启动失败"
+    echo "查看启动日志: $STARTUP_LOG"
+    if [ -f "$STARTUP_LOG" ]; then
+        echo "最近的错误信息:"
+        tail -20 "$STARTUP_LOG"
+    fi
     exit 1
 fi
 

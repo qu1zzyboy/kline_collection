@@ -109,7 +109,9 @@ impl KlineCollectionConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(600),
-            redis_key_prefix: env::var("REDIS_KEY_PREFIX")
+            // 优先使用 KLINE_REDIS_KEY_PREFIX，如果没有则使用 REDIS_KEY_PREFIX（向后兼容），最后使用默认值
+            redis_key_prefix: env::var("KLINE_REDIS_KEY_PREFIX")
+                .or_else(|_| env::var("REDIS_KEY_PREFIX"))
                 .unwrap_or_else(|_| "binance:kline:1s".to_string()),
         }
     }
@@ -144,7 +146,9 @@ impl ObCollectionConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1200), // 默认 1200 条 = 10 分钟（500ms * 1200）
-            redis_key_prefix: env::var("REDIS_KEY_PREFIX")
+            // 优先使用 OB_REDIS_KEY_PREFIX，如果没有则使用 REDIS_KEY_PREFIX（向后兼容），最后使用默认值
+            redis_key_prefix: env::var("OB_REDIS_KEY_PREFIX")
+                .or_else(|_| env::var("REDIS_KEY_PREFIX"))
                 .unwrap_or_else(|_| "binance:ob:500ms".to_string()),
             order_book_depth: env::var("ORDER_BOOK_DEPTH")
                 .ok()
