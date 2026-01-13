@@ -17,19 +17,20 @@ use tokio::time::sleep;
 
 use crate::config::KlineCollectionConfig;
 
-/// Lua 脚本：原子性去重写入
-/// 使用 SET key "1" NX EX ttl 来判断是否已存在
-/// KEYS[1]: listKey (binance:kline:1s:{symbol})
+/// Lua 脚本：原子性去重写入（使用 Redis Streams）
+/// 使用 SET key "1" NX EX ttl 来判断是否已存在（去重）
+/// KEYS[1]: streamKey (按交易对分的 Stream key，格式: BINANCE_KLINE_1S:{symbol})
 /// KEYS[2]: dedupKey (binance:kline:1s:dedup:{symbol}:{ts_event})
 /// ARGV[1]: klineJson (K线数据 JSON)
-/// ARGV[2]: maxKlines (最大K线数量)
+/// ARGV[2]: maxLen (最大长度，600条，相当于10分钟数据)
 /// ARGV[3]: ttl (去重 key 的过期时间，秒)
 /// 返回: 1 表示新写入，0 表示重复（已存在）
+/// 注意: 使用 '*' 让 Redis 自动生成消息 ID，确保严格递增
 const LUA_SCRIPT_DEDUP_WRITE: &str = r#"
-local listKey = KEYS[1]
+local streamKey = KEYS[1]
 local dedupKey = KEYS[2]
 local klineJson = ARGV[1]
-local maxKlines = tonumber(ARGV[2])
+local maxLen = tonumber(ARGV[2])
 local ttl = tonumber(ARGV[3])
 
 -- 使用 SET key "1" NX EX ttl 来判断是否已存在
@@ -40,15 +41,17 @@ if result == nil then
     return 0
 end
 
--- key 不存在，执行写入操作
-redis.call('LPUSH', listKey, klineJson)
-redis.call('LTRIM', listKey, 0, maxKlines - 1)
+-- key 不存在，执行写入操作（使用 XADD 存储到 Stream）
+-- 使用 '*' 让 Redis 自动生成消息 ID，确保严格递增，避免 ID 冲突
+-- MAXLEN ~ maxLen 表示近似限制长度，性能更好
+redis.call('XADD', streamKey, 'MAXLEN', '~', maxLen, '*', 'data', klineJson)
 
 -- 返回1表示新写入
 return 1
 "#;
 
 /// 去重 key 的过期时间（秒），10秒
+/// 用于防止短时间内重复写入相同的数据
 const DEDUP_KEY_TTL: u64 = 10;
 
 /// 加载 Lua 脚本到 Redis 并返回 SHA1 哈希
@@ -76,18 +79,18 @@ async fn load_lua_script(
 /// # Errors
 ///
 /// 如果服务启动失败或运行过程中出错，返回错误
-pub async fn run_collection_service(config: KlineCollectionConfig) -> Result<()> {
+pub async fn run_kline_collection_service(config: KlineCollectionConfig) -> Result<()> {
     log::info!("Binance Futures K线采集服务启动");
 
     // 连接 Redis
     let redis_url = config.build_redis_url();
     // 构建用于日志的 URL（隐藏密码）
-    let redis_url_log = if config.redis_password.is_empty() {
+    let redis_url_log = if config.base.redis_password.is_empty() {
         redis_url.clone()
     } else {
-        redis_url.replace(&config.redis_password, "***")
+        redis_url.replace(&config.base.redis_password, "***")
     };
-    log::info!("连接 Redis: {} (数据库: {})", redis_url_log, config.redis_database);
+    log::info!("连接 Redis: {} (数据库: {})", redis_url_log, config.base.redis_database);
     let redis_client = redis::Client::open(redis_url)?;
     
     // 配置 Redis 连接管理器：增加超时时间以处理高并发场景
@@ -103,27 +106,27 @@ pub async fn run_collection_service(config: KlineCollectionConfig) -> Result<()>
         .get_connection_manager_with_config(connection_manager_config)
         .await
         .context("Failed to connect to Redis")?;
-    log::info!("Redis 连接成功 (数据库: {})", config.redis_database);
+    log::info!("Redis 连接成功 (数据库: {})", config.base.redis_database);
     
     // 加载 Lua 脚本
     let lua_script_sha = load_lua_script(&mut redis_conn).await?;
     log::info!("Lua 脚本已加载，准备开始采集");
 
     // 解析 Binance 配置
-    let product_type = match config.binance_product_type.as_str() {
+    let product_type = match config.base.binance_product_type.as_str() {
         "UsdM" => BinanceProductType::UsdM,
         "CoinM" => BinanceProductType::CoinM,
         _ => {
-            log::warn!("未知的产品类型: {}，使用默认值 UsdM", config.binance_product_type);
+            log::warn!("未知的产品类型: {}，使用默认值 UsdM", config.base.binance_product_type);
             BinanceProductType::UsdM
         }
     };
 
-    let environment = match config.binance_environment.as_str() {
+    let environment = match config.base.binance_environment.as_str() {
         "Mainnet" => BinanceEnvironment::Mainnet,
         "Testnet" => BinanceEnvironment::Testnet,
         _ => {
-            log::warn!("未知的环境: {}，使用默认值 Mainnet", config.binance_environment);
+            log::warn!("未知的环境: {}，使用默认值 Mainnet", config.base.binance_environment);
             BinanceEnvironment::Mainnet
         }
     };
@@ -238,7 +241,11 @@ pub async fn run_collection_service(config: KlineCollectionConfig) -> Result<()>
                                 let symbol_raw = instrument_id.symbol.as_str();
                                 // 去掉 -PERP 后缀
                                 let symbol = symbol_raw.strip_suffix("-PERP").unwrap_or(symbol_raw);
-                                let redis_key = format!("{}:{}", config.redis_key_prefix, symbol);
+                                
+                                // 使用按交易对分的 Stream key（格式: BINANCE_KLINE_1S:{symbol}）
+                                // 每个交易对一个独立的 Stream，方便查询和计算
+                                let base_key = config.redis_key_prefix.to_uppercase().replace(":", "_");
+                                let stream_key = format!("{}:{}", base_key, symbol);
                                 
                                 // 使用 ts_event 作为去重标识（对应 Go 中的 closeTime）
                                 let ts_event = bar.ts_event.as_u64();
@@ -259,9 +266,11 @@ pub async fn run_collection_service(config: KlineCollectionConfig) -> Result<()>
                                 let kline_json = serde_json::to_string(&kline_data)?;
                                 
                                 // 使用 Lua 脚本进行原子性去重写入
-                                // KEYS[1]: listKey, KEYS[2]: dedupKey
-                                // ARGV[1]: klineJson, ARGV[2]: maxKlines, ARGV[3]: ttl
+                                // KEYS[1]: streamKey (按交易对分的 Stream，格式: BINANCE_KLINE_1S:{symbol})
+                                // KEYS[2]: dedupKey (去重 key)
+                                // ARGV[1]: klineJson, ARGV[2]: maxLen, ARGV[3]: ttl
                                 // 返回: 1 表示新写入，0 表示重复（已存在）
+                                // 注意: 消息 ID 由 Redis 自动生成（使用 '*'），确保严格递增
                                 let sha_guard = lua_script_sha.lock().await;
                                 let current_sha = sha_guard.clone();
                                 drop(sha_guard);
@@ -269,7 +278,7 @@ pub async fn run_collection_service(config: KlineCollectionConfig) -> Result<()>
                                 let _result: i64 = match cmd("EVALSHA")
                                     .arg(&current_sha)
                                     .arg(2)
-                                    .arg(&redis_key)
+                                    .arg(&stream_key)
                                     .arg(&dedup_key)
                                     .arg(&kline_json)
                                     .arg(config.max_klines_per_symbol)
@@ -291,7 +300,7 @@ pub async fn run_collection_service(config: KlineCollectionConfig) -> Result<()>
                                                     cmd("EVALSHA")
                                                         .arg(&new_sha)
                                                         .arg(2)
-                                                        .arg(&redis_key)
+                                                        .arg(&stream_key)
                                                         .arg(&dedup_key)
                                                         .arg(&kline_json)
                                                         .arg(config.max_klines_per_symbol)

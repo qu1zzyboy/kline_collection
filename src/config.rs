@@ -1,22 +1,18 @@
 //! 配置模块
 //!
-//! 管理 K 线采集服务的配置参数
+//! 管理数据采集服务的配置参数
 
 use std::env;
 
-/// K 线采集服务配置
+/// 基础配置（公共字段）
 #[derive(Debug, Clone)]
-pub struct KlineCollectionConfig {
+pub struct BaseConfig {
     /// Redis 连接 URL（不包含密码和数据库编号）
     pub redis_url: String,
     /// Redis 密码（可选，默认为空）
     pub redis_password: String,
     /// Redis 数据库编号（0-15，默认为 0）
     pub redis_database: u8,
-    /// 每个品种最多存储的 K 线数量
-    pub max_klines_per_symbol: usize,
-    /// Redis Key 前缀
-    pub redis_key_prefix: String,
     /// 日志目录
     pub log_directory: String,
     /// 日志级别（stdout）
@@ -29,30 +25,8 @@ pub struct KlineCollectionConfig {
     pub binance_environment: String,
 }
 
-impl Default for KlineCollectionConfig {
-    fn default() -> Self {
-        Self {
-            redis_url: env::var("REDIS_URL")
-                .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string()),
-            redis_password: env::var("REDIS_PASSWORD")
-                .unwrap_or_else(|_| String::new()),
-            redis_database: env::var("REDIS_DATABASE")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0),
-            max_klines_per_symbol: 600,
-            redis_key_prefix: "binance:kline:1s".to_string(),
-            log_directory: "logs".to_string(),
-            log_level_stdout: "Info".to_string(),
-            log_level_file: "Info".to_string(),
-            binance_product_type: "UsdM".to_string(),
-            binance_environment: "Mainnet".to_string(),
-        }
-    }
-}
-
-impl KlineCollectionConfig {
-    /// 从环境变量创建配置
+impl BaseConfig {
+    /// 从环境变量创建基础配置
     pub fn from_env() -> Self {
         Self {
             redis_url: env::var("REDIS_URL")
@@ -63,12 +37,6 @@ impl KlineCollectionConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
-            max_klines_per_symbol: env::var("MAX_KLINES_PER_SYMBOL")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(600),
-            redis_key_prefix: env::var("REDIS_KEY_PREFIX")
-                .unwrap_or_else(|_| "binance:kline:1s".to_string()),
             log_directory: env::var("LOG_DIRECTORY")
                 .unwrap_or_else(|_| "logs".to_string()),
             log_level_stdout: env::var("LOG_LEVEL_STDOUT")
@@ -121,3 +89,76 @@ impl KlineCollectionConfig {
     }
 }
 
+/// K 线采集服务配置
+#[derive(Debug, Clone)]
+pub struct KlineCollectionConfig {
+    /// 基础配置
+    pub base: BaseConfig,
+    /// 每个品种最多存储的 K 线数量
+    pub max_klines_per_symbol: usize,
+    /// Redis Key 前缀
+    pub redis_key_prefix: String,
+}
+
+impl KlineCollectionConfig {
+    /// 从环境变量创建配置
+    pub fn from_env() -> Self {
+        Self {
+            base: BaseConfig::from_env(),
+            max_klines_per_symbol: env::var("MAX_KLINES_PER_SYMBOL")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(600),
+            redis_key_prefix: env::var("REDIS_KEY_PREFIX")
+                .unwrap_or_else(|_| "binance:kline:1s".to_string()),
+        }
+    }
+    
+    /// 构建包含密码和数据库编号的 Redis 连接 URL
+    pub fn build_redis_url(&self) -> String {
+        self.base.build_redis_url()
+    }
+}
+
+/// 订单簿采集服务配置
+#[derive(Debug, Clone)]
+pub struct ObCollectionConfig {
+    /// 基础配置
+    pub base: BaseConfig,
+    /// 每个品种最多存储的订单簿快照数量
+    pub max_snapshots_per_symbol: usize,
+    /// Redis Key 前缀
+    pub redis_key_prefix: String,
+    /// 订单簿深度（档数）
+    pub order_book_depth: usize,
+    /// 快照生成间隔（毫秒）
+    pub snapshot_interval_ms: u64,
+}
+
+impl ObCollectionConfig {
+    /// 从环境变量创建配置
+    pub fn from_env() -> Self {
+        Self {
+            base: BaseConfig::from_env(),
+            max_snapshots_per_symbol: env::var("MAX_SNAPSHOTS_PER_SYMBOL")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1200), // 默认 1200 条 = 10 分钟（500ms * 1200）
+            redis_key_prefix: env::var("REDIS_KEY_PREFIX")
+                .unwrap_or_else(|_| "binance:ob:500ms".to_string()),
+            order_book_depth: env::var("ORDER_BOOK_DEPTH")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5), // 默认 5 档
+            snapshot_interval_ms: env::var("SNAPSHOT_INTERVAL_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(500), // 默认 500ms
+        }
+    }
+    
+    /// 构建包含密码和数据库编号的 Redis 连接 URL
+    pub fn build_redis_url(&self) -> String {
+        self.base.build_redis_url()
+    }
+}

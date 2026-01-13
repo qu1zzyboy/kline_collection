@@ -12,14 +12,14 @@ use nautilus_core::UUID4;
 use nautilus_model::identifiers::TraderId;
 use std::str::FromStr;
 
-use crate::config::KlineCollectionConfig;
+use crate::config::BaseConfig;
 
 /// 初始化日志系统
 ///
 /// # Errors
 ///
 /// 如果日志初始化失败，返回错误
-pub fn init_logging(config: &KlineCollectionConfig) -> Result<nautilus_common::logging::logger::LogGuard> {
+pub fn init_logging(config: &BaseConfig) -> Result<nautilus_common::logging::logger::LogGuard> {
     let trader_id = TraderId::from("KLINE_COL-001");
     let instance_id = UUID4::new();
     

@@ -56,21 +56,16 @@ echo "  Binance 产品类型: $BINANCE_PRODUCT_TYPE"
 echo "  Binance 环境: $BINANCE_ENVIRONMENT"
 echo ""
 
-# 先编译（如果还没有编译）
-echo "正在编译服务..."
-cargo build --bin kline_col
-
 # 启动服务（后台运行）
 echo "正在启动服务..."
-BINARY_PATH="$PROJECT_DIR/target/debug/${BINARY_NAME}"
-nohup "$BINARY_PATH" > /dev/null 2>&1 &
+cargo run --bin kline_col > /dev/null 2>&1 &
 PID=$!
 
 # 保存 PID
 echo $PID > "$PID_FILE"
 
 # 等待一下，检查进程是否还在运行
-sleep 2
+sleep 1
 if ! kill -0 "$PID" 2>/dev/null; then
     rm -f "$PID_FILE"
     echo "错误: 服务启动失败"
